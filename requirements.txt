@@ -1,0 +1,14 @@
+chainlit>=1.1.0
+langgraph>=0.2.0
+langchain-google-genai>=2.0.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+tavily-python>=0.5.0
+faiss-cpu>=1.8.0
+PyPDF2>=3.0.0
+cryptography>=42.0.0
+presidio-analyzer>=2.2.0
+presidio-anonymizer>=2.2.0
+spacy>=3.7.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0

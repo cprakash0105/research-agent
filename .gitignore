@@ -1,0 +1,29 @@
+# Secrets
+.env
+secrets.enc
+secrets.key
+
+# Logs
+*.log
+audit_trail.jsonl
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Chainlit
+.chainlit/
+.files/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test docs (optional - remove this line if you want to include them)
+test_docs/
