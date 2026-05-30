@@ -2,6 +2,8 @@
 
 An agentic AI research assistant that autonomously plans, searches, analyzes, and synthesizes research reports from a natural language query. Supports document uploads (PDF/TXT/MD) with PII redaction, follow-up Q&A via RAG, and a full governance/security stack.
 
+**Live Demo:** https://research-agent-489654189917.us-central1.run.app
+
 ---
 
 ## Architecture
@@ -9,7 +11,7 @@ An agentic AI research assistant that autonomously plans, searches, analyzes, an
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          CHAINLIT UI (Browser)                           │
-│                        http://localhost:8090                             │
+│          https://research-agent-489654189917.us-central1.run.app         │
 │                                                                         │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
 │  │  🔒 Login: username/password auth                                  │ │
@@ -239,8 +241,10 @@ User Request
 | Logging | Python logging (console + file) |
 | Audit | Structured JSONL (append-only) |
 | Container | Docker (python:3.11-slim) |
-| Orchestration | Kubernetes (Kind) |
-| Config | python-dotenv |
+| Cloud | GCP Cloud Run (serverless) |
+| Secrets | GCP Secret Manager |
+| CI/CD | GCP Cloud Build |
+| Local K8s | Kind (for development) |
 
 ---
 
@@ -263,13 +267,16 @@ research-agent/
 │   ├── token_tracker.py   # Per-session token budget tracking
 │   ├── rate_limiter.py    # In-memory token bucket rate limiter
 │   └── security.py        # Encrypted secrets management
+├── public/
+│   ├── logo.svg           # Custom app logo
+│   └── avatar.svg         # Assistant avatar
 ├── k8s/
 │   ├── deployment.yaml
 │   ├── service.yaml
 │   └── secret.yaml
-├── test_docs/             # Sample docs for testing uploads
 ├── .chainlit/
-│   └── config.toml        # Auto-generated UI config
+│   └── config.toml        # UI config (theme, logo, features)
+├── cloudbuild.yaml         # GCP Cloud Build CI/CD
 ├── kind-config.yaml
 ├── Dockerfile
 ├── requirements.txt
@@ -282,23 +289,141 @@ research-agent/
 
 ---
 
-## Prerequisites
+## Deployment
 
-- Python 3.11+
-- Docker Desktop (for Kind deployment)
-- Kind (`choco install kind`)
-- kubectl
+### GCP Cloud Run (Production)
+
+The app is deployed on GCP Cloud Run as a serverless container.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        GCP Project                               │
+│                  (hevo-data-assignment-496803)                    │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Cloud Run Service: research-agent                         │ │
+│  │  Region: us-central1                                       │ │
+│  │  ┌──────────────────────────────────────────────────────┐  │ │
+│  │  │  Container (from Artifact Registry)                  │  │ │
+│  │  │  - Chainlit Server (port 8080)                       │  │ │
+│  │  │  - LangGraph Agent                                   │  │ │
+│  │  │  - FAISS (in-memory)                                 │  │ │
+│  │  │  - Presidio PII Engine + spaCy                       │  │ │
+│  │  └──────────────────────────────────────────────────────┘  │ │
+│  │  Memory: 1Gi | CPU: 1 | Timeout: 300s                     │ │
+│  │  Min instances: 0 (scales to zero)                         │ │
+│  │  Max instances: 2                                          │ │
+│  │  Session affinity: enabled (WebSocket support)             │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────────────────────────┐ │
+│  │ Artifact Registry │  │  Secret Manager                      │ │
+│  │ (Docker images)   │  │  - GOOGLE_API_KEY                    │ │
+│  │                   │  │  - TAVILY_API_KEY                    │ │
+│  │ research-agent/   │  │  - CHAINLIT_AUTH_SECRET              │ │
+│  │   app:latest      │  │  - AUTH_USERNAME                     │ │
+│  └──────────────────┘  │  - AUTH_PASSWORD                     │ │
+│                         └──────────────────────────────────────┘ │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────────┐│
+│  │  Cloud Build (CI/CD)                                          ││
+│  │  Trigger: push to main → build → deploy                      ││
+│  │  Config: cloudbuild.yaml                                      ││
+│  └──────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+
+URL: https://research-agent-489654189917.us-central1.run.app
+```
+
+#### Deploy Steps
+
+```bash
+# 1. Set project
+export PROJECT_ID=hevo-data-assignment-496803
+export REGION=us-central1
+gcloud config set project $PROJECT_ID
+
+# 2. Enable APIs
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com secretmanager.googleapis.com
+
+# 3. Create Artifact Registry
+gcloud artifacts repositories create research-agent \
+  --repository-format=docker --location=$REGION
+
+# 4. Store secrets in Secret Manager
+echo -n "your_key" | gcloud secrets create GOOGLE_API_KEY --data-file=-
+echo -n "your_key" | gcloud secrets create TAVILY_API_KEY --data-file=-
+echo -n "your_secret" | gcloud secrets create CHAINLIT_AUTH_SECRET --data-file=-
+echo -n "researcher" | gcloud secrets create AUTH_USERNAME --data-file=-
+echo -n "agent123" | gcloud secrets create AUTH_PASSWORD --data-file=-
+
+# 5. Grant Cloud Run access to secrets
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+# 6. Build
+gcloud builds submit \
+  --tag $REGION-docker.pkg.dev/$PROJECT_ID/research-agent/app:latest
+
+# 7. Deploy
+gcloud run deploy research-agent \
+  --image $REGION-docker.pkg.dev/$PROJECT_ID/research-agent/app:latest \
+  --region $REGION --platform managed --port 8080 \
+  --memory 1Gi --cpu 1 --timeout 300 --session-affinity \
+  --min-instances 0 --max-instances 2 \
+  --set-secrets "GOOGLE_API_KEY=GOOGLE_API_KEY:latest,TAVILY_API_KEY=TAVILY_API_KEY:latest,CHAINLIT_AUTH_SECRET=CHAINLIT_AUTH_SECRET:latest,AUTH_USERNAME=AUTH_USERNAME:latest,AUTH_PASSWORD=AUTH_PASSWORD:latest" \
+  --allow-unauthenticated
+```
+
+#### Cost
+
+| Resource | Cost |
+|----------|------|
+| Cloud Run (scales to zero) | ~$0-5/month |
+| Artifact Registry | ~$0.10/month |
+| Secret Manager | ~$0.06/month |
+| Cloud Build | Free tier (120 min/day) |
+| **Total** | **~$0-5/month** |
+
+---
+
+### Local Development (Kind Cluster)
+
+```
+┌─────────────────────────────────────────────┐
+│            Kind Cluster (Local)              │
+│                                             │
+│  ┌────────────────────────────────────────┐ │
+│  │  Pod: research-agent                   │ │
+│  │  ┌──────────────────────────────────┐  │ │
+│  │  │  Chainlit Server (port 8080)     │  │ │
+│  │  │  LangGraph Agent                 │  │ │
+│  │  │  FAISS (in-memory)              │  │ │
+│  │  │  Presidio PII Engine            │  │ │
+│  │  └──────────────────────────────────┘  │ │
+│  │  Env: from K8s Secret                  │ │
+│  └────────────────────────────────────────┘ │
+│                                             │
+│  ┌────────────────────────────────────────┐ │
+│  │  Service: NodePort 30080 → 8080        │ │
+│  └────────────────────────────────────────┘ │
+└─────────────────────────────────────────────┘
+```
 
 ---
 
 ## Quick Start (Local)
 
 ```bash
-# 1. Navigate to project
+# 1. Clone
+git clone https://github.com/cprakash0105/research-agent.git
 cd research-agent
 
 # 2. Create .env from template
-copy .env.example .env
+cp .env.example .env
 # Edit .env with your actual API keys
 
 # 3. Install dependencies
@@ -309,24 +434,7 @@ python -m spacy download en_core_web_lg
 python -m chainlit run app/main.py --port 8090
 ```
 
-Open http://localhost:8090
-
-Login: `researcher` / `agent123` (configurable in `.env`)
-
----
-
-## Quick Start (Kind Cluster)
-
-```bash
-# 1. Base64-encode your keys and update k8s/secret.yaml
-# PowerShell:
-[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("your_key"))
-
-# 2. Deploy everything
-deploy.bat
-```
-
-Open http://localhost:8080
+Open http://localhost:8090 — Login: `researcher` / `agent123`
 
 ---
 
@@ -360,23 +468,6 @@ Open http://localhost:8080
 
 ---
 
-## Configuration (.env)
-
-```env
-# API Keys
-GOOGLE_API_KEY=your_key
-TAVILY_API_KEY=your_key
-
-# Authentication
-AUTH_USERNAME=researcher
-AUTH_PASSWORD=agent123
-
-# Session
-SESSION_TTL_SECONDS=1800
-```
-
----
-
 ## Logging & Observability
 
 ### Application Logs (`research_agent.log`)
@@ -404,37 +495,10 @@ SESSION_TTL_SECONDS=1800
 
 ---
 
-## Deployment (Kind)
-
-```
-┌─────────────────────────────────────────────┐
-│            Kind Cluster (Local)              │
-│                                             │
-│  ┌────────────────────────────────────────┐ │
-│  │  Pod: research-agent                   │ │
-│  │  ┌──────────────────────────────────┐  │ │
-│  │  │  Chainlit Server (port 8080)     │  │ │
-│  │  │  LangGraph Agent                 │  │ │
-│  │  │  FAISS (in-memory)              │  │ │
-│  │  │  Presidio PII Engine            │  │ │
-│  │  └──────────────────────────────────┘  │ │
-│  │  Env: from K8s Secret                  │ │
-│  └────────────────────────────────────────┘ │
-│                                             │
-│  ┌────────────────────────────────────────┐ │
-│  │  Service: NodePort 30080 → 8080        │ │
-│  └────────────────────────────────────────┘ │
-│                                             │
-│  Kind extraPortMappings: 8080 → 8080       │
-└─────────────────────────────────────────────┘
-```
-
----
-
 ## Interview Talking Points
 
 > "I built an agentic AI research assistant using LangGraph with a 4-node state machine — Planner, Researcher, Analyst, Writer. It uses RAG with FAISS for grounded answers and supports document uploads with automatic PII redaction via Presidio.
 >
 > For governance, I implemented a full security stack: Chainlit password auth, token bucket rate limiting, LLM-based prompt injection detection, input validation with regex patterns, output safety filtering, encrypted secrets management, structured JSONL audit trails, per-session token budget tracking with 80% warnings, and 30-minute session TTL with auto-cleanup.
 >
-> The architecture is designed so each governance feature is a middleware layer — they can be toggled independently without changing the core agent logic."
+> It's deployed on GCP Cloud Run with secrets in Secret Manager, CI/CD via Cloud Build, and scales to zero when idle. The architecture is designed so each governance feature is a middleware layer — they can be toggled independently without changing the core agent logic."
