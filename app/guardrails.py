@@ -57,10 +57,11 @@ async def check_prompt_injection(user_input: str) -> tuple[bool, str]:
     """Use LLM to detect prompt injection attempts."""
     try:
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             temperature=0.0,
             max_output_tokens=10,
+            max_retries=3,
         )
         prompt = INPUT_GUARD_PROMPT.format(input=user_input)
         response = llm.invoke(prompt)
@@ -83,10 +84,11 @@ async def check_output_safety(output: str) -> tuple[bool, str]:
     """Use LLM to validate output safety."""
     try:
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             temperature=0.0,
             max_output_tokens=20,
+            max_retries=3,
         )
         prompt = OUTPUT_GUARD_PROMPT.format(output=output[:3000])  # Limit context
         response = llm.invoke(prompt)

@@ -71,28 +71,35 @@ def _load_text(file_path: str, file_name: str) -> list[Source]:
 
 
 def _load_pdf(file_path: str, file_name: str) -> list[Source]:
-    """Load PDF files using PyPDF2."""
+    """Load PDF files using pypdf."""
     try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
     except ImportError:
-        logger.error("PyPDF2 not installed. Install with: pip install PyPDF2")
+        try:
+            from PyPDF2 import PdfReader
+        except ImportError:
+            logger.error("Neither pypdf nor PyPDF2 installed. Install with: pip install pypdf")
+            return []
+
+    try:
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+
+        if not text.strip():
+            logger.warning(f"PDF {file_name} has no extractable text")
+            return []
+
+        logger.info(f"Loaded PDF: {file_name} ({len(reader.pages)} pages, {len(text)} chars)")
+        return [Source(
+            title=file_name,
+            url=f"local://{file_name}",
+            content=text,
+            query="user_upload",
+        )]
+    except Exception as e:
+        logger.error(f"Error reading PDF {file_name}: {e}", exc_info=True)
         return []
-
-    reader = PdfReader(file_path)
-    text = ""
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-
-    if not text.strip():
-        logger.warning(f"PDF {file_name} has no extractable text")
-        return []
-
-    logger.info(f"Loaded PDF: {file_name} ({len(reader.pages)} pages, {len(text)} chars)")
-    return [Source(
-        title=file_name,
-        url=f"local://{file_name}",
-        content=text,
-        query="user_upload",
-    )]
