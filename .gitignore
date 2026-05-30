@@ -13,8 +13,8 @@ __pycache__/
 .venv/
 venv/
 
-# Chainlit
-.chainlit/
+# Chainlit (exclude generated files, keep config)
+.chainlit/translations/
 .files/
 
 # IDE
@@ -25,5 +25,5 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Test docs (optional - remove this line if you want to include them)
+# Test docs
 test_docs/

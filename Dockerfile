@@ -16,6 +16,6 @@ COPY . .
 # Cloud Run injects PORT env var (default 8080)
 ENV PORT=8080
 
-EXPOSE ${PORT}
+EXPOSE 8080
 
-CMD chainlit run app/main.py --host 0.0.0.0 --port ${PORT}
+ENTRYPOINT ["sh", "-c", "python -m chainlit run app/main.py --host 0.0.0.0 --port $PORT"]
