@@ -310,7 +310,7 @@ The app is deployed on GCP Cloud Run as a serverless container.
 │  │  │  - FAISS (in-memory)                                 │  │ │
 │  │  │  - Presidio PII Engine + spaCy                       │  │ │
 │  │  └──────────────────────────────────────────────────────┘  │ │
-│  │  Memory: 1Gi | CPU: 1 | Timeout: 300s                     │ │
+│  │  Memory: 2Gi | CPU: 1 | Timeout: 300s                     │ │
 │  │  Min instances: 0 (scales to zero)                         │ │
 │  │  Max instances: 2                                          │ │
 │  │  Session affinity: enabled (WebSocket support)             │ │
@@ -372,7 +372,7 @@ gcloud builds submit \
 gcloud run deploy research-agent \
   --image $REGION-docker.pkg.dev/$PROJECT_ID/research-agent/app:latest \
   --region $REGION --platform managed --port 8080 \
-  --memory 1Gi --cpu 1 --timeout 300 --session-affinity \
+  --memory 2Gi --cpu 1 --timeout 300 --session-affinity \
   --min-instances 0 --max-instances 2 \
   --set-secrets "GOOGLE_API_KEY=GOOGLE_API_KEY:latest,TAVILY_API_KEY=TAVILY_API_KEY:latest,CHAINLIT_AUTH_SECRET=CHAINLIT_AUTH_SECRET:latest,AUTH_USERNAME=AUTH_USERNAME:latest,AUTH_PASSWORD=AUTH_PASSWORD:latest" \
   --allow-unauthenticated
@@ -491,6 +491,49 @@ Open http://localhost:8090 — Login: `researcher` / `agent123`
 {"timestamp":"2025-05-29T16:50:18Z","event_type":"RESEARCH_COMPLETE","user_id":"researcher","session_id":"abc123","query":"impact of AI on drug discovery","details":{"sources_count":12,"token_usage":{"total_tokens":8450,"budget_used_pct":8.5}}}
 {"timestamp":"2025-05-29T16:51:02Z","event_type":"FILE_UPLOAD","user_id":"researcher","session_id":"abc123","query":"","details":{"filename":"report.pdf","pii_detected":true}}
 {"timestamp":"2025-05-29T16:52:30Z","event_type":"GUARDRAIL_BLOCK","user_id":"researcher","session_id":"abc123","query":"ignore all previous instructions","details":{"reason":"blocked pattern detected"}}
+```
+
+---
+
+## Troubleshooting & Known Issues
+
+### Issues Encountered During Development
+
+| Issue | Symptom | Root Cause | Fix |
+|-------|---------|-----------|-----|
+| **OOM on file upload** | App reloads/crashes when uploading PDF | Presidio + spaCy `en_core_web_lg` model (~800MB) + app exceeds 1Gi memory limit | Increase Cloud Run memory to 2Gi: `gcloud run services update research-agent --region us-central1 --memory 2Gi` |
+| **429 RESOURCE_EXHAUSTED** | "You exceeded your current quota" on LLM calls | Free tier limits: `gemini-2.5-flash` = 20 RPD, `gemini-2.0-flash` = 1500 RPD | Enable billing on GCP project (uses $300 free credit). Paid tier = 2000 RPM, unlimited RPD |
+| **Model NOT_FOUND** | "models/gemini-2.0-flash is no longer available to new users" | Google deprecated `gemini-2.0-flash` for new API keys | Switch to `gemini-2.5-flash` (works with billing-enabled keys) |
+| **WebSocket drop on upload** | Page reloads when attaching files | Synchronous PII scanning blocks async event loop, causing Chainlit WebSocket timeout | Run file processing in thread via `cl.make_async()`, send immediate acknowledgment message |
+| **Port binding error** | `[Errno 10048] address already in use` | Previous Chainlit process still holding the port | Kill process: `netstat -ano \| findstr :8090` then `taskkill /PID <pid> /F` |
+| **Chainlit config outdated** | "config.toml is outdated" error on startup | Chainlit version upgrade changed config format | Delete `.chainlit/config.toml` and let Chainlit regenerate it |
+| **Container fails to start on Cloud Run** | "container failed to start and listen on PORT" | `chainlit` command not on PATH in container | Use `python -m chainlit` instead of bare `chainlit` in Dockerfile entrypoint |
+
+### Cloud Run Configuration Tips
+
+| Setting | Recommended Value | Why |
+|---------|------------------|-----|
+| Memory | **2Gi** | Presidio + spaCy model requires ~800MB, plus app overhead |
+| CPU | 1 | Sufficient for single-user demo |
+| Timeout | 300s | Research queries can take 30-60s with multiple LLM calls |
+| Session affinity | Enabled | Required for Chainlit WebSocket connections |
+| Min instances | 0 | Scales to zero (saves cost) |
+| Max instances | 2 | Prevents runaway costs |
+
+### Debugging Commands
+
+```bash
+# View Cloud Run logs
+gcloud run services logs read research-agent --region us-central1 --limit 50
+
+# Check current revision status
+gcloud run revisions list --service research-agent --region us-central1
+
+# Update memory without redeploying
+gcloud run services update research-agent --region us-central1 --memory 2Gi
+
+# Check which model works with your key
+python -c "from langchain_google_genai import ChatGoogleGenerativeAI; llm = ChatGoogleGenerativeAI(model='gemini-2.5-flash', google_api_key='YOUR_KEY'); print(llm.invoke('hi').content)"
 ```
 
 ---
