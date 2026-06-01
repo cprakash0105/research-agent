@@ -140,7 +140,13 @@ async def handle_message(message: cl.Message):
 
     # Handle file uploads
     if message.elements:
-        await handle_uploads(message.elements, user_id, session_id)
+        # Send immediate acknowledgment to keep WebSocket alive
+        await cl.Message(content="⏳ Processing uploaded file(s)...").send()
+        try:
+            await handle_uploads(message.elements, user_id, session_id)
+        except Exception as e:
+            logger.error(f"Upload handling failed: {e}", exc_info=True)
+            await cl.Message(content=f"❌ Failed to process upload: {str(e)}").send()
         if not query.strip():
             return
 
