@@ -338,7 +338,7 @@ async def handle_followup(question: str, vector_store, user_id: str, session_id:
         )
 
         llm = ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             temperature=0.3,
             max_retries=3,
