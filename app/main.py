@@ -276,26 +276,33 @@ async def run_research(query: str, user_id: str, session_id: str):
 
 
 async def handle_uploads(elements, user_id: str, session_id: str):
-    """Process uploaded files with PII detection."""
+    """Process uploaded files with PII detection. Runs in thread to avoid blocking."""
     uploaded_sources = cl.user_session.get("uploaded_sources") or []
     new_files = []
     pii_warnings = []
 
     for element in elements:
         if hasattr(element, "path") and element.path:
-            sources, pii_report = load_file(element.path, element.name, redact=True)
-            uploaded_sources.extend(sources)
-            new_files.append(element.name)
-
-            # Audit log
-            log_file_upload(user_id, session_id, element.name, pii_report["has_pii"])
-
-            if pii_report["has_pii"]:
-                pii_warnings.append(
-                    f"  - **{element.name}**: {pii_report['total_findings']} PII entities detected and redacted "
-                    f"({', '.join(f'{k}: {v}' for k, v in pii_report['entity_counts'].items())})"
+            try:
+                # Run file loading in a thread to prevent WebSocket timeout
+                sources, pii_report = await cl.make_async(load_file)(
+                    element.path, element.name, True
                 )
-            logger.info(f"Uploaded file processed: {element.name} (PII: {pii_report['has_pii']})")
+                uploaded_sources.extend(sources)
+                new_files.append(element.name)
+
+                # Audit log
+                log_file_upload(user_id, session_id, element.name, pii_report["has_pii"])
+
+                if pii_report["has_pii"]:
+                    pii_warnings.append(
+                        f"  - **{element.name}**: {pii_report['total_findings']} PII entities detected and redacted "
+                        f"({', '.join(f'{k}: {v}' for k, v in pii_report['entity_counts'].items())})"
+                    )
+                logger.info(f"Uploaded file processed: {element.name} (PII: {pii_report['has_pii']})")
+            except Exception as e:
+                logger.error(f"Failed to process upload {element.name}: {e}", exc_info=True)
+                new_files.append(f"{element.name} (failed)")
 
     cl.user_session.set("uploaded_sources", uploaded_sources)
 
